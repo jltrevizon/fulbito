@@ -25,6 +25,13 @@
 <h1 class="text-2xl md:text-3xl font-bold text-center my-4">Torneo Fútbol 5 - Round Robin Ida y Vuelta con Desempates</h1>
 
 <div class="flex flex-wrap gap-4 items-center justify-center mb-6">
+  <label class="flex items-center gap-2 text-base">
+    Formato:
+    <select id="formatSelect" class="px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-300">
+      <option value="ida-vuelta" selected>Ida y Vuelta</option>
+      <option value="solo-ida">Solo Ida</option>
+    </select>
+  </label>
   <label class="flex flex-col gap-1 text-base min-w-[220px]">
     <span>Equipos (coma separados):</span>
     <textarea id="teamsInput" rows="3" class="w-60 max-w-full px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-300 resize-y">Barquisimeto,La Mora 1,La Mora 2,La Piedad,Valle Hondo</textarea>
@@ -65,35 +72,31 @@
     return `${h}:${m}`;
   }
 
-  function generateRoundRobinSchedule(teams) {
+  function generateRoundRobinSchedule(teams, format = 'ida-vuelta') {
     let n = teams.length;
-    let rounds = n * 2;
     let teamList = [...teams];
+    let isDouble = format === 'ida-vuelta';
     if (n % 2 !== 0) {
       teamList.push(null);
       n++;
     }
     let schedule = [];
     let rotation = teamList.slice();
-
+    let rounds = isDouble ? (n - 1) * 2 : n - 1;
     for (let round = 0; round < rounds; round++) {
       let roundMatches = [];
       for (let i = 0; i < n / 2; i++) {
         let t1 = rotation[i];
         let t2 = rotation[n - 1 - i];
         if (t1 !== null && t2 !== null) {
-          if (round < rounds / 2) {
-            roundMatches.push({
-              home: t1,
-              away: t2,
-              round: round + 1
-            });
+          if (isDouble) {
+            if (round < rounds / 2) {
+              roundMatches.push({ home: t1, away: t2, round: round + 1 });
+            } else {
+              roundMatches.push({ home: t2, away: t1, round: round + 1 });
+            }
           } else {
-            roundMatches.push({
-              home: t2,
-              away: t1,
-              round: round + 1
-            });
+            roundMatches.push({ home: t1, away: t2, round: round + 1 });
           }
         }
       }
@@ -355,7 +358,9 @@
     teams = input.split(',').map(t => t.trim()).filter(t => t);
     if (teams.length < 2) return alert('Debe haber al menos 2 equipos.');
 
-    matches = generateRoundRobinSchedule(teams).map(m => ({
+    const format = document.getElementById('formatSelect')?.value || 'ida-vuelta';
+
+    matches = generateRoundRobinSchedule(teams, format).map(m => ({
       home: m.home,
       away: m.away,
       round: m.round,
