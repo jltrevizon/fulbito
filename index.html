@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Torneo Fútbol 5 - Round Robin con Desempates Completos</title>
+<style>
+  body { font-family: Arial, sans-serif; max-width: 900px; margin: 20px auto; padding: 10px; }
+  h1, h2 { text-align: center; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+  th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+  th { background-color: #eee; }
+  input[type=number], input[type=time], input[type=text] { width: 80px; }
+  input[type=text] { width: 250px; }
+  .winner { font-weight: bold; color: green; }
+  .team-list { margin-bottom: 20px; }
+  button { padding: 8px 12px; margin-top: 10px; cursor: pointer; }
+</style>
+</head>
+<body>
+
+<h1>Torneo Fútbol 5 - Round Robin Ida y Vuelta con Desempates</h1>
+
+<div class="team-list">
+  <label>Equipos (coma separados):&nbsp;
+    <input type="text" id="teamsInput" value="Barquisimeto,La Mora 1,La Mora 2,La Piedad,Valle Hondo" />
+  </label>
+  &nbsp;&nbsp;&nbsp;
+  <label>Hora Inicio:&nbsp;
+    <input type="time" id="startTimeInput" value="18:00" />
+  </label>
+  &nbsp;&nbsp;&nbsp;
+  <label>Duración Partido (minutos):&nbsp;
+    <input type="number" id="matchDurationInput" min="1" max="60" value="6" />
+  </label>
+  <br />
+  <button id="createTournamentBtn">Crear Torneo</button>
+</div>
+
+<h2>Partidos del Torneo</h2>
+<div id="matchesContainer"></div>
+
+<h2>Tabla de Posiciones</h2>
+<div id="rankingContainer"></div>
+
+<script>
+  let teams = [];
+  let matches = [];
+  const storageKey = 'futbol5-torneo-vuelta-desempate';
+
+  function timeToMinutes(t) {
+    const [h, m] = t.split(':').map(Number);
+    return h * 60 + m;
+  }
+  function minutesToTime(mins) {
+    const h = Math.floor(mins / 60).toString().padStart(2, '0');
+    const m = (mins % 60).toString().padStart(2, '0');
+    return `${h}:${m}`;
+  }
+
+  function generateRoundRobinSchedule(teams) {
+    let n = teams.length;
+    let rounds = n * 2;
+    let teamList = [...teams];
+    if (n % 2 !== 0) {
+      teamList.push(null);
+      n++;
+    }
+    let schedule = [];
+    let rotation = teamList.slice();
+
+    for (let round = 0; round < rounds; round++) {
+      let roundMatches = [];
+      for (let i = 0; i < n / 2; i++) {
+        let t1 = rotation[i];
+        let t2 = rotation[n - 1 - i];
+        if (t1 !== null && t2 !== null) {
+          if (round < rounds / 2) {
+            roundMatches.push({
+              home: t1,
+              away: t2,
+              round: round + 1
+            });
+          } else {
+            roundMatches.push({
+              home: t2,
+              away: t1,
+              round: round + 1
+            });
+          }
+        }
+      }
+      schedule.push(roundMatches);
+      let fixed = rotation[0];
+      rotation.splice(1, 0, rotation.pop());
+      rotation[0] = fixed;
+    }
+    return schedule.flat();
+  }
+
+  function calculateStandingsDetailed() {
+    let standings = {};
+    teams.forEach(t => {
+      standings[t] = {
+        played: 0, won: 0, draw: 0, lost: 0,
+        goalsFor: 0, goalsAgainst: 0, points: 0,
+        fairPlayPoints: 0
+      };
+    });
+
+    // Procesar solo partidos con equipos válidos
+    matches.forEach(m => {
+      if (
+        m.home && m.away &&
+        standings[m.home] && standings[m.away] &&
+        m.scoreHome != null && m.scoreAway != null
+      ) {
+        standings[m.home].played++;
+        standings[m.away].played++;
+        standings[m.home].goalsFor += m.scoreHome;
+        standings[m.home].goalsAgainst += m.scoreAway;
+        standings[m.away].goalsFor += m.scoreAway;
+        standings[m.away].goalsAgainst += m.scoreHome;
+
+        if (m.scoreHome > m.scoreAway) {
+          standings[m.home].won++;
+          standings[m.away].lost++;
+          standings[m.home].points += 3;
+        } else if (m.scoreHome < m.scoreAway) {
+          standings[m.away].won++;
+          standings[m.home].lost++;
+          standings[m.away].points += 3;
+        } else {
+          standings[m.home].draw++;
+          standings[m.away].draw++;
+          standings[m.home].points += 1;
+          standings[m.away].points += 1;
+        }
+        standings[m.home].fairPlayPoints += 0;
+        standings[m.away].fairPlayPoints += 0;
+      }
+    });
+
+    // Detectar empate por puntos
+    let groups = {};
+    for (const team in standings) {
+      const pts = standings[team].points;
+      groups[pts] = groups[pts] || [];
+      groups[pts].push(team);
+    }
+
+    function headToHeadStats(group) {
+      let h2h = {};
+      group.forEach(t => {
+        h2h[t] = { points: 0, goalsFor: 0, goalsAgainst: 0 };
+      });
+      matches.forEach(m => {
+        if (
+          group.includes(m.home) && group.includes(m.away) &&
+          m.scoreHome != null && m.scoreAway != null &&
+          h2h[m.home] && h2h[m.away]
+        ) {
+          h2h[m.home].points += m.scoreHome > m.scoreAway ? 3 : m.scoreHome === m.scoreAway ? 1 : 0;
+          h2h[m.away].points += m.scoreAway > m.scoreHome ? 3 : m.scoreHome === m.scoreAway ? 1 : 0;
+          h2h[m.home].goalsFor += m.scoreHome;
+          h2h[m.home].goalsAgainst += m.scoreAway;
+          h2h[m.away].goalsFor += m.scoreAway;
+          h2h[m.away].goalsAgainst += m.scoreHome;
+        }
+      });
+      return h2h;
+    }
+
+    function compareTeams(a, b, tiedGroup) {
+      if (b.points !== a.points) return b.points - a.points;
+      let diffA = a.goalsFor - a.goalsAgainst;
+      let diffB = b.goalsFor - b.goalsAgainst;
+      if (diffB !== diffA) return diffB - diffA;
+      if (b.goalsFor !== a.goalsFor) return b.goalsFor - a.goalsFor;
+
+      if (tiedGroup && tiedGroup.length > 1) {
+        let h2h = headToHeadStats(tiedGroup);
+        if (h2h[b.team].points !== h2h[a.team].points) return h2h[b.team].points - h2h[a.team].points;
+        let diff_h2hA = h2h[a.team].goalsFor - h2h[a.team].goalsAgainst;
+        let diff_h2hB = h2h[b.team].goalsFor - h2h[b.team].goalsAgainst;
+        if (diff_h2hB !== diff_h2hA) return diff_h2hB - diff_h2hA;
+        if (h2h[b.team].goalsFor !== h2h[a.team].goalsFor) return h2h[b.team].goalsFor - h2h[a.team].goalsFor;
+      }
+
+      if (a.fairPlayPoints !== b.fairPlayPoints) return a.fairPlayPoints - b.fairPlayPoints;
+      return a.team.localeCompare(b.team);
+    }
+
+    let allTeamsStats = [];
+    for (const team in standings) {
+      allTeamsStats.push({
+        team,
+        points: standings[team].points,
+        goalsFor: standings[team].goalsFor,
+        goalsAgainst: standings[team].goalsAgainst,
+        played: standings[team].played,
+        won: standings[team].won,
+        draw: standings[team].draw,
+        lost: standings[team].lost,
+        fairPlayPoints: standings[team].fairPlayPoints
+      });
+    }
+
+    function sortComplete(list) {
+      let groupsPts = {};
+      list.forEach(x => {
+        groupsPts[x.points] = groupsPts[x.points] || [];
+        groupsPts[x.points].push(x);
+      });
+      let sortedTotal = [];
+      Object.keys(groupsPts).sort((a,b) => b - a).forEach(pts => {
+        let group = groupsPts[pts];
+        if (group.length > 1) {
+          let tiedTeams = group.map(x => x.team);
+          group.sort((a,b) => compareTeams(a,b,tiedTeams));
+        }
+        sortedTotal.push(...group);
+      });
+      return sortedTotal;
+    }
+
+    allTeamsStats = sortComplete(allTeamsStats);
+    return allTeamsStats;
+  }
+
+  function renderRanking() {
+    const container = document.getElementById('rankingContainer');
+    const standings = calculateStandingsDetailed();
+    let html = `
+      <table>
+        <thead>
+          <tr>
+            <th>Pos</th><th>Equipo</th><th>PJ</th><th>G</th><th>E</th><th>P</th>
+            <th>GF</th><th>GC</th><th>DG</th><th>Ptos</th>
+          </tr>
+        </thead>
+        <tbody>`;
+    standings.forEach((s, i) => {
+      const diff = s.goalsFor - s.goalsAgainst;
+      html += `<tr ${i === 0 ? 'class="winner"' : ''}>
+        <td>${i + 1}</td><td>${s.team}</td><td>${s.played}</td><td>${s.won}</td><td>${s.draw}</td><td>${s.lost}</td>
+        <td>${s.goalsFor}</td><td>${s.goalsAgainst}</td><td>${diff}</td><td>${s.points}</td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+    container.innerHTML = html;
+  }
+
+  function renderMatches() {
+    const container = document.getElementById('matchesContainer');
+    const startTime = document.getElementById('startTimeInput').value || '18:00';
+    const matchDuration = parseInt(document.getElementById('matchDurationInput').value, 10) || 6;
+    const startMinutes = timeToMinutes(startTime);
+
+    let html = `
+      <table>
+        <thead>
+          <tr><th>Ronda</th><th>Hora</th><th>Local</th><th>Resultado</th><th>Visitante</th></tr>
+        </thead>
+        <tbody>`;
+
+    matches.forEach((m, i) => {
+      const round = m.round || 1;
+      const roundStartMinutes = startMinutes + (round - 1) * matchDuration * 2;
+      const matchIndex = matches.filter(x => x.round === round).indexOf(m);
+      const matchStartMinutes = roundStartMinutes + matchIndex * matchDuration;
+      const timeStr = minutesToTime(matchStartMinutes);
+
+      html += `<tr>
+        <td>${round}</td>
+        <td>${timeStr}</td>
+        <td>${m.home}</td>
+        <td>
+          <input type="number" min="0" id="scoreHome${i}" value="${m.scoreHome != null ? m.scoreHome : ''}" style="width:40px" />
+          -
+          <input type="number" min="0" id="scoreAway${i}" value="${m.scoreAway != null ? m.scoreAway : ''}" style="width:40px" />
+        </td>
+        <td>${m.away}</td>
+      </tr>`;
+    });
+
+    html += `</tbody></table>`;
+    container.innerHTML = html;
+
+    matches.forEach((m, i) => {
+      document.getElementById('scoreHome' + i).onchange = e => {
+        const val = parseInt(e.target.value);
+        matches[i].scoreHome = isNaN(val) ? null : val;
+        saveResults();
+      };
+      document.getElementById('scoreAway' + i).onchange = e => {
+        const val = parseInt(e.target.value);
+        matches[i].scoreAway = isNaN(val) ? null : val;
+        saveResults();
+      };
+    });
+  }
+
+  function saveResults() {
+    localStorage.setItem(storageKey, JSON.stringify(matches));
+    renderRanking();
+  }
+
+  function loadResults() {
+    const data = localStorage.getItem(storageKey);
+    if (data) {
+      matches = JSON.parse(data);
+      renderMatches();
+      renderRanking();
+      return true;
+    }
+    return false;
+  }
+
+  function createTournament() {
+    const input = document.getElementById('teamsInput').value.trim();
+    if (!input) return alert('Ingrese nombres de equipos separados por coma');
+    teams = input.split(',').map(t => t.trim()).filter(t => t);
+    if (teams.length < 2) return alert('Debe haber al menos 2 equipos.');
+
+    matches = generateRoundRobinSchedule(teams).map(m => ({
+      home: m.home,
+      away: m.away,
+      round: m.round,
+      scoreHome: null,
+      scoreAway: null
+    }));
+
+    saveResults();
+    renderMatches();
+    renderRanking();
+  }
+
+  window.onload = () => {
+    if (!loadResults()) createTournament();
+  };
+
+  document.getElementById('createTournamentBtn').onclick = () => {
+    if(confirm('Esto reiniciará los resultados guardados, ¿continuar?')){
+      localStorage.removeItem(storageKey);
+      createTournament();
+    }
+  };
+</script>
+
+</body>
+</html>
