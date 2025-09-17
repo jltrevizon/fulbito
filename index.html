@@ -57,6 +57,14 @@
 <h2 class="text-xl font-semibold text-center my-2">Partidos del Torneo</h2>
 <div id="matchesContainer"></div>
 
+<!-- Modal Cronómetro Fullscreen -->
+<div id="timerModal" class="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 hidden">
+  <div class="flex flex-col items-center justify-center w-full h-full">
+    <span id="timerModalClose" class="absolute top-4 right-6 text-white text-3xl cursor-pointer select-none">&times;</span>
+  <span id="timerModalValue" class="font-mono font-extrabold text-white select-none w-full text-center" style="font-size:min(28vw, 60vh); letter-spacing:0.08em;line-height:1;">00:00</span>
+  </div>
+</div>
+
 <h2 class="text-xl font-semibold text-center my-2">Tabla de Posiciones</h2>
 <div id="rankingContainer"></div>
 </div>
@@ -282,6 +290,7 @@
     container.innerHTML = html;
   }
 
+
   function renderMatches() {
     const container = document.getElementById('matchesContainer');
     const startTime = document.getElementById('startTimeInput').value || '18:00';
@@ -307,15 +316,38 @@
       const matchStartMinutes = roundStartMinutes + matchIndex * matchDuration;
       const timeStr = minutesToTime(matchStartMinutes);
 
+      // Cronómetro
+      if (m.timer == null) m.timer = 0;
+      if (m.timerState == null) m.timerState = 'stopped';
+      if (m.timerLastStop == null) m.timerLastStop = 0;
+
+      function formatTimer(secs) {
+        const mm = Math.floor(secs / 60).toString().padStart(2, '0');
+        const ss = (secs % 60).toString().padStart(2, '0');
+        return `${mm}:${ss}`;
+      }
+
       html += `<tr>
         <td class="border px-2 py-1">${m.home}</td>
         <td class="border px-2 py-1">
           <div class="flex flex-col items-center justify-center">
             <span class="text-xs text-gray-500 mb-1">Ronda <span class="font-semibold">${round}</span> <span class="mx-1 text-gray-400">-</span> ${timeStr}</span>
-            <span class="flex flex-row items-center justify-center gap-1">
+            <span class="flex flex-row items-center justify-center gap-1 mb-1">
               <input type="number" min="0" id="scoreHome${i}" value="${m.scoreHome != null ? m.scoreHome : ''}" class="w-12 px-1 py-0.5 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-300" />
               <span class="mx-1">-</span>
               <input type="number" min="0" id="scoreAway${i}" value="${m.scoreAway != null ? m.scoreAway : ''}" class="w-12 px-1 py-0.5 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-300" />
+            </span>
+            <span class="flex flex-row items-center gap-2 mt-1">
+              <a href="#" id="timerLink${i}" class="font-mono text-base w-16 text-center hover:text-blue-500 focus:outline-none" tabindex="0"><span id="timer${i}">${formatTimer(m.timer)}</span></a>
+              <button id="playPause${i}" class="px-2 py-1 rounded bg-green-500 text-white text-xs hover:bg-green-600 flex items-center" title="Play/Pause">
+                ${m.timerState === 'running' ?
+                  `<svg xmlns='http://www.w3.org/2000/svg' class='h-4 w-4' fill='none' viewBox='0 0 24 24' stroke='currentColor'><rect x='6' y='4' width='4' height='16' rx='1'/><rect x='14' y='4' width='4' height='16' rx='1'/></svg>`
+                  :
+                  `<svg xmlns='http://www.w3.org/2000/svg' class='h-4 w-4' fill='currentColor' viewBox='0 0 24 24'><polygon points='5,3 19,12 5,21'/></svg>`}
+              </button>
+              <button id="stop${i}" class="px-2 py-1 rounded bg-red-500 text-white text-xs hover:bg-red-600 flex items-center" title="Stop">
+                <svg xmlns='http://www.w3.org/2000/svg' class='h-4 w-4' fill='currentColor' viewBox='0 0 24 24'><rect x='5' y='5' width='14' height='14' rx='2'/></svg>
+              </button>
             </span>
           </div>
         </td>
@@ -325,6 +357,23 @@
 
     html += `</tbody></table></div>`;
     container.innerHTML = html;
+
+    // Limpia intervalos previos
+    if (window._rowTimerInterval) clearInterval(window._rowTimerInterval);
+
+    // Actualiza todos los timers de fila cada segundo
+    function updateAllRowTimers() {
+      matches.forEach((m, i) => {
+        const el = document.getElementById('timer' + i);
+        if (el) {
+          const mm = Math.floor(m.timer / 60).toString().padStart(2, '0');
+          const ss = (m.timer % 60).toString().padStart(2, '0');
+          el.textContent = `${mm}:${ss}`;
+        }
+      });
+    }
+    updateAllRowTimers();
+    window._rowTimerInterval = setInterval(updateAllRowTimers, 1000);
 
     matches.forEach((m, i) => {
       document.getElementById('scoreHome' + i).onchange = e => {
@@ -337,7 +386,195 @@
         matches[i].scoreAway = isNaN(val) ? null : val;
         saveResults();
       };
+
+      // Cronómetro
+      const timerEl = document.getElementById('timer' + i);
+      const timerLink = document.getElementById('timerLink' + i);
+      // Modal fullscreen
+      if (timerLink) {
+        timerLink.onclick = (e) => {
+          e.preventDefault();
+          showTimerModal(i);
+        };
+      }
+
+      const playPauseBtn = document.getElementById('playPause' + i);
+      const stopBtn = document.getElementById('stop' + i);
+      let stopClickCount = 0;
+      let stopTimeout = null;
+
+      // Solo un timer activo
+      function getActiveTimerIdx() {
+        return matches.findIndex(m => m.timerState === 'running');
+      }
+
+      matches.forEach((m, i) => {
+        document.getElementById('scoreHome' + i).onchange = e => {
+          const val = parseInt(e.target.value);
+          matches[i].scoreHome = isNaN(val) ? null : val;
+          saveResults();
+        };
+        document.getElementById('scoreAway' + i).onchange = e => {
+          const val = parseInt(e.target.value);
+          matches[i].scoreAway = isNaN(val) ? null : val;
+          saveResults();
+        };
+
+        // Cronómetro
+        const timerEl = document.getElementById('timer' + i);
+        const timerLink = document.getElementById('timerLink' + i);
+        if (timerLink) {
+          timerLink.onclick = (e) => {
+            e.preventDefault();
+            showTimerModal(i);
+          };
+        }
+
+        const playPauseBtn = document.getElementById('playPause' + i);
+        const stopBtn = document.getElementById('stop' + i);
+        let stopClickCount = 0;
+        let stopTimeout = null;
+
+        // Deshabilitar controles si hay otro timer activo
+        const activeIdx = getActiveTimerIdx();
+        const isOtherActive = activeIdx !== -1 && activeIdx !== i;
+        if (playPauseBtn) {
+          playPauseBtn.disabled = isOtherActive;
+          playPauseBtn.innerHTML = m.timerState === 'running'
+            ? `<svg xmlns='http://www.w3.org/2000/svg' class='h-4 w-4' fill='none' viewBox='0 0 24 24' stroke='currentColor'><rect x='6' y='4' width='4' height='16' rx='1'/><rect x='14' y='4' width='4' height='16' rx='1'/></svg>`
+            : `<svg xmlns='http://www.w3.org/2000/svg' class='h-4 w-4' fill='currentColor' viewBox='0 0 24 24'><polygon points='5,3 19,12 5,21'/></svg>`;
+          playPauseBtn.onclick = () => {
+            if (m.timerState === 'running') {
+              m.timerState = 'paused';
+            } else {
+              // Pausar todos los demás
+              matches.forEach((mm, idx) => {
+                if (idx !== i) mm.timerState = 'paused';
+              });
+              m.timerState = 'running';
+            }
+            saveResults();
+            renderMatches(); // Forzar re-render para iconos y deshabilitados
+          };
+        }
+
+        if (stopBtn) {
+          stopBtn.disabled = isOtherActive;
+          stopBtn.onclick = () => {
+            if (m.timerState === 'running') {
+              m.timerState = 'paused';
+              saveResults();
+              renderMatches();
+            }
+            stopClickCount++;
+            clearTimeout(stopTimeout);
+            stopTimeout = setTimeout(() => { stopClickCount = 0; }, 1200);
+            if (stopClickCount === 2) {
+              stopClickCount = 0;
+              if (confirm('¿Reiniciar el cronómetro a 00:00?')) {
+                m.timer = 0;
+                m.timerState = 'stopped';
+                saveResults();
+                renderMatches();
+              }
+            }
+          };
+        }
+      });
+
+      if (stopBtn) {
+        stopBtn.onclick = () => {
+          if (m.timerState === 'running') {
+            m.timerState = 'paused';
+            saveResults();
+          }
+          stopClickCount++;
+          clearTimeout(stopTimeout);
+          stopTimeout = setTimeout(() => { stopClickCount = 0; }, 1200);
+          if (stopClickCount === 2) {
+            stopClickCount = 0;
+            if (confirm('¿Reiniciar el cronómetro a 00:00?')) {
+              m.timer = 0;
+              m.timerState = 'stopped';
+              saveResults();
+            }
+          }
+        };
+      }
     });
+
+    // Global timer tick for running timers
+    if (window._globalTimerInterval) clearInterval(window._globalTimerInterval);
+    window._globalTimerInterval = setInterval(() => {
+      matches.forEach((m, i) => {
+        if (m.timerState === 'running') {
+          m.timer++;
+        }
+      });
+      saveResults();
+    }, 1000);
+
+    // Modal cronómetro fullscreen
+    if (!window._timerModalInterval) window._timerModalInterval = null;
+    window.showTimerModal = function(matchIdx) {
+      const modal = document.getElementById('timerModal');
+      const valueEl = document.getElementById('timerModalValue');
+      const closeEl = document.getElementById('timerModalClose');
+      let blink = false;
+      function formatTimer(secs) {
+        const mm = Math.floor(secs / 60).toString().padStart(2, '0');
+        const ss = (secs % 60).toString().padStart(2, '0');
+        return `${mm}:${ss}`;
+      }
+      function update() {
+        const m = matches[matchIdx];
+        valueEl.textContent = formatTimer(m.timer);
+        // Obtener duración del partido en segundos
+        let matchDurationMin = 6;
+        const durInput = document.getElementById('matchDurationInput');
+        if (durInput && durInput.value) {
+          matchDurationMin = parseInt(durInput.value, 10) || 6;
+        }
+        const matchDurationSec = matchDurationMin * 60;
+        if (m.timer > matchDurationSec) {
+          // Sobrepasó el tiempo: titilar entre dos tonos de rojo
+          valueEl.style.color = blink ? '#ff1a1a' : '#b80000';
+          valueEl.style.textShadow = blink ? '0 0 16px #ff1a1a, 0 0 32px #ff1a1a' : '0 0 16px #b80000, 0 0 32px #b80000';
+          valueEl.style.opacity = '1';
+        } else if (m.timer === matchDurationSec) {
+          // Justo en el tiempo: titilar entre dos tonos de rojo
+          valueEl.style.color = blink ? '#ff1a1a' : '#b80000';
+          valueEl.style.textShadow = blink ? '0 0 16px #ff1a1a, 0 0 32px #ff1a1a' : '0 0 16px #b80000, 0 0 32px #b80000';
+          valueEl.style.opacity = '1';
+        } else if (m.timer >= matchDurationSec - 60) {
+          // Queda 1 min o menos: titilar entre dos tonos de amarillo
+          valueEl.style.color = blink ? '#ffe600' : '#b8a100';
+          valueEl.style.textShadow = blink ? '0 0 16px #ffe600, 0 0 32px #ffe600' : '0 0 16px #b8a100, 0 0 32px #b8a100';
+          valueEl.style.opacity = '1';
+        } else {
+          valueEl.style.color = '#fff';
+          valueEl.style.textShadow = '';
+          valueEl.style.opacity = blink ? '0.7' : '1';
+        }
+        valueEl.style.fontWeight = '900';
+        blink = !blink;
+      }
+      if (window._timerModalInterval) clearInterval(window._timerModalInterval);
+      update();
+      window._timerModalInterval = setInterval(update, 1000);
+      modal.classList.remove('hidden');
+      closeEl.onclick = () => {
+        modal.classList.add('hidden');
+        clearInterval(window._timerModalInterval);
+      };
+      // Cerrar con ESC
+      window.onkeydown = (e) => {
+        if (e.key === 'Escape') {
+          modal.classList.add('hidden');
+          clearInterval(window._timerModalInterval);
+        }
+      };
+    };
   }
 
   function saveResults() {
