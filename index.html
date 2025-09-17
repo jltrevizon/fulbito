@@ -271,8 +271,7 @@
       <table class="min-w-full border border-gray-300 bg-white text-sm">
         <thead>
           <tr class="bg-gray-100">
-            <th class="px-2 py-1 border">Ronda</th>
-            <th class="px-2 py-1 border">Hora</th>
+            <th class="px-2 py-1 border">Ronda / Hora</th>
             <th class="px-2 py-1 border">Local</th>
             <th class="px-2 py-1 border">Resultado</th>
             <th class="px-2 py-1 border">Visitante</th>
@@ -288,8 +287,7 @@
       const timeStr = minutesToTime(matchStartMinutes);
 
       html += `<tr>
-        <td class="border px-2 py-1">${round}</td>
-        <td class="border px-2 py-1">${timeStr}</td>
+        <td class="border px-2 py-1 whitespace-nowrap"><span class="font-semibold">${round}</span> <span class="mx-1 text-gray-400">-</span> <span class="text-gray-500">${timeStr}</span></td>
         <td class="border px-2 py-1">${m.home}</td>
         <td class="border px-2 py-1">
           <input type="number" min="0" id="scoreHome${i}" value="${m.scoreHome != null ? m.scoreHome : ''}" class="w-12 px-1 py-0.5 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-300" />
