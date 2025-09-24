@@ -19,39 +19,91 @@ function minutesToTime(mins) {
 }
 
 function generateRoundRobinSchedule(teams, format = 'ida-vuelta') {
-    let n = teams.length;
-    let teamList = shuffleArray(teams);
+    // Mezclar equipos aleatoriamente para asignar a posiciones fijas
+    let teamList = shuffleArray([...teams]);
     let isDouble = format === 'ida-vuelta';
-    if (n % 2 !== 0) {
-        teamList.push(null);
-        n++;
-    }
+    
+    // Patrón fijo de enfrentamientos (para 5 equipos)
+    const fixedPattern = [
+        { home: 0, away: 1 }, // Equipo 1 vs Equipo 2
+        { home: 2, away: 3 }, // Equipo 3 vs Equipo 4
+        { home: 0, away: 4 }, // Equipo 1 vs Equipo 5
+        { home: 1, away: 2 }, // Equipo 2 vs Equipo 3
+        { home: 3, away: 4 }, // Equipo 4 vs Equipo 5
+        { home: 0, away: 2 }, // Equipo 1 vs Equipo 3
+        { home: 1, away: 3 }, // Equipo 2 vs Equipo 4
+        { home: 2, away: 4 }, // Equipo 3 vs Equipo 5
+        { home: 0, away: 3 }, // Equipo 1 vs Equipo 4
+        { home: 1, away: 4 }  // Equipo 2 vs Equipo 5
+    ];
+    
     let schedule = [];
-    let rotation = teamList.slice();
-    let rounds = isDouble ? (n - 1) * 2 : n - 1;
-    for (let round = 0; round < rounds; round++) {
-        let roundMatches = [];
-        for (let i = 0; i < n / 2; i++) {
-            let t1 = rotation[i];
-            let t2 = rotation[n - 1 - i];
-            if (t1 !== null && t2 !== null) {
-                if (isDouble) {
-                    if (round < rounds / 2) {
-                        roundMatches.push({ home: t1, away: t2, round: round + 1 });
-                    } else {
-                        roundMatches.push({ home: t2, away: t1, round: round + 1 });
-                    }
-                } else {
-                    roundMatches.push({ home: t1, away: t2, round: round + 1 });
-                }
+    
+    // Si tenemos exactamente 5 equipos, usar el patrón fijo
+    if (teams.length === 5) {
+        let roundCounter = 1;
+        let matchesPerRound = 2; // 2 partidos por ronda para 5 equipos
+        
+        for (let i = 0; i < fixedPattern.length; i++) {
+            const match = fixedPattern[i];
+            const round = Math.floor(i / matchesPerRound) + 1;
+            
+            if (match.home < teamList.length && match.away < teamList.length) {
+                schedule.push({
+                    home: teamList[match.home],
+                    away: teamList[match.away],
+                    round: round
+                });
             }
         }
-        schedule.push(roundMatches);
-        let fixed = rotation[0];
-        rotation.splice(1, 0, rotation.pop());
-        rotation[0] = fixed;
+        
+        // Si es ida y vuelta, agregar los partidos de vuelta
+        if (isDouble) {
+            const firstRoundMatches = [...schedule];
+            const maxRound = Math.max(...schedule.map(m => m.round));
+            
+            firstRoundMatches.forEach(match => {
+                schedule.push({
+                    home: match.away, // Intercambiar local y visitante
+                    away: match.home,
+                    round: match.round + maxRound
+                });
+            });
+        }
+    } else {
+        // Para otros números de equipos, usar el algoritmo original
+        let n = teamList.length;
+        if (n % 2 !== 0) {
+            teamList.push(null);
+            n++;
+        }
+        let rotation = teamList.slice();
+        let rounds = isDouble ? (n - 1) * 2 : n - 1;
+        for (let round = 0; round < rounds; round++) {
+            let roundMatches = [];
+            for (let i = 0; i < n / 2; i++) {
+                let t1 = rotation[i];
+                let t2 = rotation[n - 1 - i];
+                if (t1 !== null && t2 !== null) {
+                    if (isDouble) {
+                        if (round < rounds / 2) {
+                            roundMatches.push({ home: t1, away: t2, round: round + 1 });
+                        } else {
+                            roundMatches.push({ home: t2, away: t1, round: round + 1 });
+                        }
+                    } else {
+                        roundMatches.push({ home: t1, away: t2, round: round + 1 });
+                    }
+                }
+            }
+            schedule.push(...roundMatches);
+            let fixed = rotation[0];
+            rotation.splice(1, 0, rotation.pop());
+            rotation[0] = fixed;
+        }
     }
-    return schedule.flat();
+    
+    return schedule;
 }
 
 function calculateStandingsDetailed() {
@@ -230,285 +282,342 @@ function renderMatches() {
     const startTime = document.getElementById('startTimeInput').value || '18:00';
     const matchDuration = parseInt(document.getElementById('matchDurationInput').value, 10) || 6;
     const startMinutes = timeToMinutes(startTime);
+    const allowDragDrop = document.getElementById('allowDragDropCheckbox')?.checked ?? true;
 
-    let html = `
-      <div class="overflow-x-auto">
-      <table class="min-w-full border border-gray-300 bg-white text-sm">
-        <thead>
-          <tr class="bg-gray-100">
-            <th class="px-2 py-1 border">Local</th>
-            <th class="px-2 py-1 border">Resultado</th>
-            <th class="px-2 py-1 border">Visitante</th>
-          </tr>
-        </thead>
-        <tbody>`;
-
+    // Agrupar partidos por ronda
+    const roundGroups = {};
     matches.forEach((m, i) => {
         const round = m.round || 1;
-        const roundStartMinutes = startMinutes + (round - 1) * matchDuration * 2;
-        const matchIndex = matches.filter(x => x.round === round).indexOf(m);
-        const matchStartMinutes = roundStartMinutes + matchIndex * matchDuration;
-        const timeStr = minutesToTime(matchStartMinutes);
-
-        // Cronómetro
-        if (m.timer == null) m.timer = 0;
-        if (m.timerState == null) m.timerState = 'stopped';
-        if (m.timerLastStop == null) m.timerLastStop = 0;
-
-        function formatTimer(secs) {
-            const mm = Math.floor(secs / 60).toString().padStart(2, '0');
-            const ss = (secs % 60).toString().padStart(2, '0');
-            return `${mm}:${ss}`;
+        if (!roundGroups[round]) {
+            roundGroups[round] = [];
         }
-
-        html += `<tr>
-        <td class="border px-2 py-1">${m.home}</td>
-        <td class="border px-2 py-1">
-          <div class="flex flex-col items-center justify-center">
-            <span class="text-xs text-gray-500 mb-1">Ronda <span class="font-semibold">${round}</span> <span class="mx-1 text-gray-400">-</span> ${timeStr}</span>
-            <span class="flex flex-row items-center justify-center gap-1 mb-1">
-              <input type="number" min="0" id="scoreHome${i}" value="${m.scoreHome != null ? m.scoreHome : ''}" class="w-12 px-1 py-0.5 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-300" />
-              <span class="mx-1">-</span>
-              <input type="number" min="0" id="scoreAway${i}" value="${m.scoreAway != null ? m.scoreAway : ''}" class="w-12 px-1 py-0.5 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-300" />
-            </span>
-            <span class="flex flex-row items-center gap-2 mt-1">
-              <a href="#" id="timerLink${i}" class="font-mono text-base w-16 text-center hover:text-blue-500 focus:outline-none" tabindex="0"><span id="timer${i}">${formatTimer(m.timer)}</span></a>
-              <button id="playPause${i}" class="px-2 py-1 rounded bg-green-500 text-white text-xs hover:bg-green-600 flex items-center" title="Play/Pause">
-                ${m.timerState === 'running' ?
-                `<svg xmlns='http://www.w3.org/2000/svg' class='h-4 w-4' fill='none' viewBox='0 0 24 24' stroke='currentColor'><rect x='6' y='4' width='4' height='16' rx='1'/><rect x='14' y='4' width='4' height='16' rx='1'/></svg>`
-                :
-                `<svg xmlns='http://www.w3.org/2000/svg' class='h-4 w-4' fill='currentColor' viewBox='0 0 24 24'><polygon points='5,3 19,12 5,21'/></svg>`}
-              </button>
-              <button id="stop${i}" class="px-2 py-1 rounded bg-red-500 text-white text-xs hover:bg-red-600 flex items-center" title="Stop">
-                <svg xmlns='http://www.w3.org/2000/svg' class='h-4 w-4' fill='currentColor' viewBox='0 0 24 24'><rect x='5' y='5' width='14' height='14' rx='2'/></svg>
-              </button>
-            </span>
-          </div>
-        </td>
-        <td class="border px-2 py-1">${m.away}</td>
-      </tr>`;
+        roundGroups[round].push({ ...m, originalIndex: i });
     });
 
-    html += `</tbody></table></div>`;
-    container.innerHTML = html;
+    // Ordenar rondas numéricamente
+    const sortedRounds = Object.keys(roundGroups).sort((a, b) => parseInt(a) - parseInt(b));
 
-    // Limpia intervalos previos
-    if (window._rowTimerInterval) clearInterval(window._rowTimerInterval);
-
-    // Actualiza todos los timers de fila cada segundo
-    function updateAllRowTimers() {
-        matches.forEach((m, i) => {
-            const el = document.getElementById('timer' + i);
-            if (el) {
-                const mm = Math.floor(m.timer / 60).toString().padStart(2, '0');
-                const ss = (m.timer % 60).toString().padStart(2, '0');
-                el.textContent = `${mm}:${ss}`;
-            }
-        });
+    function formatTimer(secs) {
+        const mm = Math.floor(secs / 60).toString().padStart(2, '0');
+        const ss = (secs % 60).toString().padStart(2, '0');
+        return `${mm}:${ss}`;
     }
-    updateAllRowTimers();
-    window._rowTimerInterval = setInterval(updateAllRowTimers, 1000);
 
-    matches.forEach((m, i) => {
-        document.getElementById('scoreHome' + i).onchange = e => {
-            const val = parseInt(e.target.value);
-            matches[i].scoreHome = isNaN(val) ? null : val;
-            saveResults();
-        };
-        document.getElementById('scoreAway' + i).onchange = e => {
-            const val = parseInt(e.target.value);
-            matches[i].scoreAway = isNaN(val) ? null : val;
-            saveResults();
-        };
+    let html = '<div class="space-y-4">';
 
-        // Cronómetro
-        const timerEl = document.getElementById('timer' + i);
-        const timerLink = document.getElementById('timerLink' + i);
-        // Modal fullscreen
-        if (timerLink) {
-            timerLink.onclick = (e) => {
-                e.preventDefault();
-                showTimerModal(i);
-            };
-        }
+    sortedRounds.forEach(roundNum => {
+        const round = parseInt(roundNum);
+        const roundMatches = roundGroups[roundNum];
+        const roundStartMinutes = startMinutes + (round - 1) * matchDuration * 2;
 
-        const playPauseBtn = document.getElementById('playPause' + i);
-        const stopBtn = document.getElementById('stop' + i);
-        let stopClickCount = 0;
-        let stopTimeout = null;
+        html += `
+        <div class="round-container bg-gray-50 border-2 border-gray-200 rounded-lg p-3" 
+             ${allowDragDrop ? 'draggable="true"' : ''} 
+             data-round="${round}" 
+             style="${allowDragDrop ? 'cursor: move;' : ''}">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-lg font-semibold text-gray-700">Ronda ${round}</h3>
+                ${allowDragDrop ? `
+                <div class="text-sm text-gray-500">
+                    <svg class="inline w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/>
+                    </svg>
+                    Arrastra para intercambiar rondas
+                </div>` : ''}
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full border border-gray-300 bg-white text-sm rounded">
+                    <thead>
+                        <tr class="bg-gray-100">
+                            <th class="px-2 py-1 border">Local</th>
+                            <th class="px-2 py-1 border">Resultado</th>
+                            <th class="px-2 py-1 border">Visitante</th>
+                        </tr>
+                    </thead>
+                    <tbody>`;
 
-        // Solo un timer activo
-        function getActiveTimerIdx() {
-            return matches.findIndex(m => m.timerState === 'running');
-        }
-
-        matches.forEach((m, i) => {
-            document.getElementById('scoreHome' + i).onchange = e => {
-                const val = parseInt(e.target.value);
-                matches[i].scoreHome = isNaN(val) ? null : val;
-                saveResults();
-            };
-            document.getElementById('scoreAway' + i).onchange = e => {
-                const val = parseInt(e.target.value);
-                matches[i].scoreAway = isNaN(val) ? null : val;
-                saveResults();
-            };
+        roundMatches.forEach((m, matchIndex) => {
+            const i = m.originalIndex;
+            const matchStartMinutes = roundStartMinutes + matchIndex * matchDuration;
+            const timeStr = minutesToTime(matchStartMinutes);
 
             // Cronómetro
-            const timerEl = document.getElementById('timer' + i);
-            const timerLink = document.getElementById('timerLink' + i);
-            if (timerLink) {
-                timerLink.onclick = (e) => {
-                    e.preventDefault();
-                    showTimerModal(i);
-                };
+            if (m.timer == null) m.timer = 0;
+            if (m.timerState == null) m.timerState = 'stopped';
+            if (m.timerLastStop == null) m.timerLastStop = 0;
+
+            html += `<tr ${allowDragDrop ? 'draggable="true"' : ''} data-index="${i}" data-round="${round}" class="${allowDragDrop ? 'cursor-move' : ''} match-row">
+            <td class="border px-2 py-1">${m.home}</td>
+            <td class="border px-2 py-1">
+              <div class="flex flex-col items-center justify-center">
+                <span class="text-xs text-gray-500 mb-1">${timeStr}</span>
+                <span class="flex flex-row items-center justify-center gap-1 mb-1">
+                  <input type="number" min="0" id="scoreHome${i}" value="${m.scoreHome != null ? m.scoreHome : ''}" class="w-12 px-1 py-0.5 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-300" />
+                  <span class="mx-1">-</span>
+                  <input type="number" min="0" id="scoreAway${i}" value="${m.scoreAway != null ? m.scoreAway : ''}" class="w-12 px-1 py-0.5 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-300" />
+                </span>
+                <span class="flex flex-row items-center gap-2 mt-1">
+                  <a href="#" id="timerLink${i}" class="font-mono text-base w-16 text-center hover:text-blue-500 focus:outline-none" tabindex="0"><span id="timer${i}">${formatTimer(m.timer)}</span></a>
+                  <button id="playPause${i}" class="px-2 py-1 rounded bg-green-500 text-white text-xs hover:bg-green-600 flex items-center" title="Play/Pause">
+                    ${m.timerState === 'running' ?
+                    `<svg xmlns='http://www.w3.org/2000/svg' class='h-4 w-4' fill='none' viewBox='0 0 24 24' stroke='currentColor'><rect x='6' y='4' width='4' height='16' rx='1'/><rect x='14' y='4' width='4' height='16' rx='1'/></svg>`
+                    :
+                    `<svg xmlns='http://www.w3.org/2000/svg' class='h-4 w-4' fill='currentColor' viewBox='0 0 24 24'><polygon points='5,3 19,12 5,21'/></svg>`}
+                  </button>
+                  <button id="stop${i}" class="px-2 py-1 rounded bg-red-500 text-white text-xs hover:bg-red-600 flex items-center" title="Stop">
+                    <svg xmlns='http://www.w3.org/2000/svg' class='h-4 w-4' fill='currentColor' viewBox='0 0 24 24'><rect x='5' y='5' width='14' height='14' rx='2'/></svg>
+                  </button>
+                </span>
+              </div>
+            </td>
+            <td class="border px-2 py-1">${m.away}</td>
+          </tr>`;
+        });
+
+        html += `</tbody></table></div></div>`;
+    });
+
+    html += '</div>';
+    container.innerHTML = html;
+
+    // Función para intercambiar rondas completas
+    function swapRounds(round1, round2) {
+        if (round1 === round2) return;
+        
+        matches.forEach(match => {
+            if (match.round === round1) {
+                match.round = round2;
+            } else if (match.round === round2) {
+                match.round = round1;
             }
+        });
+        
+        saveResults();
+        renderMatches();
+    }
 
-            const playPauseBtn = document.getElementById('playPause' + i);
-            const stopBtn = document.getElementById('stop' + i);
-            let stopClickCount = 0;
-            let stopTimeout = null;
+    // Drag & Drop: reordenar dentro de la misma jornada (round)
+    function reorderWithinRound(roundNum, srcGlobalIdx, tgtGlobalIdx) {
+        const round = parseInt(roundNum, 10);
+        const indices = [];
+        for (let idx = 0; idx < matches.length; idx++) {
+            if (matches[idx].round === round) indices.push(idx);
+        }
+        if (indices.length === 0) return;
+        const srcPos = indices.indexOf(srcGlobalIdx);
+        const tgtPos = indices.indexOf(tgtGlobalIdx);
+        if (srcPos === -1 || tgtPos === -1 || srcPos === tgtPos) return;
+        const blockStart = Math.min(...indices);
+        const blockLen = indices.length;
+        const block = matches.slice(blockStart, blockStart + blockLen);
+        const [moved] = block.splice(srcPos, 1);
+        block.splice(tgtPos, 0, moved);
+        for (let k = 0; k < blockLen; k++) {
+            matches[blockStart + k] = block[k];
+        }
+        saveResults();
+        renderMatches();
+    }
 
-            // Deshabilitar controles si hay otro timer activo
-            const activeIdx = getActiveTimerIdx();
-            const isOtherActive = activeIdx !== -1 && activeIdx !== i;
-            if (playPauseBtn) {
-                playPauseBtn.disabled = isOtherActive;
-                playPauseBtn.innerHTML = m.timerState === 'running'
-                    ? `<svg xmlns='http://www.w3.org/2000/svg' class='h-4 w-4' fill='none' viewBox='0 0 24 24' stroke='currentColor'><rect x='6' y='4' width='4' height='16' rx='1'/><rect x='14' y='4' width='4' height='16' rx='1'/></svg>`
-                    : `<svg xmlns='http://www.w3.org/2000/svg' class='h-4 w-4' fill='currentColor' viewBox='0 0 24 24'><polygon points='5,3 19,12 5,21'/></svg>`;
-                playPauseBtn.onclick = () => {
-                    if (m.timerState === 'running') {
-                        m.timerState = 'paused';
-                    } else {
-                        // Pausar todos los demás
-                        matches.forEach((mm, idx) => {
-                            if (idx !== i) mm.timerState = 'paused';
-                        });
-                        m.timerState = 'running';
-                    }
-                    saveResults();
-                    renderMatches(); // Forzar re-render para iconos y deshabilitados
-                };
-            }
+    // Event listeners para intercambio de rondas completas (solo si está habilitado)
+    if (allowDragDrop) {
+        const roundContainers = container.querySelectorAll('.round-container');
+        let dragSrcRound = null;
+        let dragType = null; // 'round' o 'match'
 
-            if (stopBtn) {
-                stopBtn.disabled = isOtherActive;
-                stopBtn.onclick = () => {
-                    if (m.timerState === 'running') {
-                        m.timerState = 'paused';
-                        saveResults();
-                        renderMatches();
-                    }
-                    stopClickCount++;
-                    clearTimeout(stopTimeout);
-                    stopTimeout = setTimeout(() => { stopClickCount = 0; }, 1200);
-                    if (stopClickCount === 2) {
-                        stopClickCount = 0;
-                        if (confirm('¿Reiniciar el cronómetro a 00:00?')) {
-                            m.timer = 0;
-                            m.timerState = 'stopped';
-                            saveResults();
-                            renderMatches();
-                        }
-                    }
-                };
+        roundContainers.forEach(roundContainer => {
+        roundContainer.addEventListener('dragstart', (e) => {
+            // Solo permitir drag desde el contenedor de la ronda, no desde las filas de partidos
+            if (e.target === roundContainer) {
+                dragSrcRound = parseInt(roundContainer.dataset.round, 10);
+                dragType = 'round';
+                e.dataTransfer.effectAllowed = 'move';
+                roundContainer.classList.add('opacity-50', 'scale-95');
+                e.dataTransfer.setData('text/plain', ''); // Para compatibilidad
             }
         });
 
+        roundContainer.addEventListener('dragover', (e) => {
+            if (dragType === 'round' && dragSrcRound != null) {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                roundContainer.classList.add('ring-4', 'ring-blue-400', 'bg-blue-50');
+            }
+        });
+
+        roundContainer.addEventListener('dragleave', (e) => {
+            // Solo remover la clase si realmente salimos del contenedor
+            if (!roundContainer.contains(e.relatedTarget)) {
+                roundContainer.classList.remove('ring-4', 'ring-blue-400', 'bg-blue-50');
+            }
+        });
+
+        roundContainer.addEventListener('drop', (e) => {
+            if (dragType === 'round' && dragSrcRound != null) {
+                e.preventDefault();
+                e.stopPropagation();
+                const tgtRound = parseInt(roundContainer.dataset.round, 10);
+                roundContainer.classList.remove('ring-4', 'ring-blue-400', 'bg-blue-50');
+                
+                if (dragSrcRound !== tgtRound) {
+                    swapRounds(dragSrcRound, tgtRound);
+                }
+                
+                dragSrcRound = null;
+                dragType = null;
+            }
+        });
+
+        roundContainer.addEventListener('dragend', () => {
+            roundContainer.classList.remove('opacity-50', 'scale-95');
+            roundContainers.forEach(rc => rc.classList.remove('ring-4', 'ring-blue-400', 'bg-blue-50'));
+            dragSrcRound = null;
+            dragType = null;
+        });
+        });
+
+        // Event listeners para reordenar partidos dentro de la misma ronda
+        const matchRows = container.querySelectorAll('.match-row');
+        let dragSrcMatchIdx = null;
+        let dragSrcMatchRound = null;
+
+        matchRows.forEach(row => {
+        row.addEventListener('dragstart', (e) => {
+            e.stopPropagation(); // Evitar que se propague al contenedor de la ronda
+            dragSrcMatchIdx = parseInt(row.dataset.index, 10);
+            dragSrcMatchRound = parseInt(row.dataset.round, 10);
+            dragType = 'match';
+            e.dataTransfer.effectAllowed = 'move';
+            row.classList.add('opacity-50');
+        });
+
+        row.addEventListener('dragover', (e) => {
+            if (dragType === 'match') {
+                const r = parseInt(row.dataset.round, 10);
+                if (dragSrcMatchRound === r) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.dataTransfer.dropEffect = 'move';
+                    row.classList.add('ring-2', 'ring-green-400');
+                }
+            }
+        });
+
+        row.addEventListener('dragleave', () => {
+            row.classList.remove('ring-2', 'ring-green-400');
+        });
+
+        row.addEventListener('drop', (e) => {
+            if (dragType === 'match') {
+                e.preventDefault();
+                e.stopPropagation();
+                row.classList.remove('ring-2', 'ring-green-400');
+                const tgtIdx = parseInt(row.dataset.index, 10);
+                const tgtRound = parseInt(row.dataset.round, 10);
+                if (dragSrcMatchIdx != null && dragSrcMatchRound === tgtRound) {
+                    reorderWithinRound(tgtRound, dragSrcMatchIdx, tgtIdx);
+                }
+                dragSrcMatchIdx = null;
+                dragSrcMatchRound = null;
+                dragType = null;
+            }
+        });
+
+            row.addEventListener('dragend', () => {
+                row.classList.remove('opacity-50');
+                matchRows.forEach(r => r.classList.remove('ring-2', 'ring-green-400'));
+                dragSrcMatchIdx = null;
+                dragSrcMatchRound = null;
+                if (dragType === 'match') {
+                    dragType = null;
+                }
+            });
+        });
+    }
+
+    // Set up timer event listeners and score input handlers
+    matches.forEach((m, i) => {
+        // Score input change handlers
+        const scoreHomeInput = document.getElementById(`scoreHome${i}`);
+        const scoreAwayInput = document.getElementById(`scoreAway${i}`);
+        
+        if (scoreHomeInput) {
+            scoreHomeInput.addEventListener('change', () => {
+                matches[i].scoreHome = scoreHomeInput.value ? parseInt(scoreHomeInput.value) : null;
+                saveResults();
+            });
+        }
+        
+        if (scoreAwayInput) {
+            scoreAwayInput.addEventListener('change', () => {
+                matches[i].scoreAway = scoreAwayInput.value ? parseInt(scoreAwayInput.value) : null;
+                saveResults();
+            });
+        }
+
+        // Timer functionality
+        const timerDisplay = document.getElementById(`timer${i}`);
+        const playPauseBtn = document.getElementById(`playPause${i}`);
+        const stopBtn = document.getElementById(`stop${i}`);
+        const timerLink = document.getElementById(`timerLink${i}`);
+
+        // Prevenir drag en inputs y botones para evitar interferencias
+        [scoreHomeInput, scoreAwayInput, playPauseBtn, stopBtn, timerLink].forEach(element => {
+            if (element) {
+                element.addEventListener('mousedown', (e) => {
+                    e.stopPropagation();
+                });
+                element.addEventListener('dragstart', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                });
+            }
+        });
+
+        if (playPauseBtn) {
+            playPauseBtn.addEventListener('click', () => {
+                if (matches[i].timerState === 'running') {
+                    matches[i].timerState = 'paused';
+                    matches[i].timerLastStop = Date.now();
+                } else {
+                    matches[i].timerState = 'running';
+                    matches[i].timerStartTime = Date.now() - (matches[i].timer * 1000);
+                }
+                saveResults();
+                renderMatches();
+            });
+        }
+
         if (stopBtn) {
-            stopBtn.onclick = () => {
-                if (m.timerState === 'running') {
-                    m.timerState = 'paused';
-                    saveResults();
-                }
-                stopClickCount++;
-                clearTimeout(stopTimeout);
-                stopTimeout = setTimeout(() => { stopClickCount = 0; }, 1200);
-                if (stopClickCount === 2) {
-                    stopClickCount = 0;
-                    if (confirm('¿Reiniciar el cronómetro a 00:00?')) {
-                        m.timer = 0;
-                        m.timerState = 'stopped';
-                        saveResults();
-                    }
-                }
-            };
+            stopBtn.addEventListener('click', () => {
+                matches[i].timer = 0;
+                matches[i].timerState = 'stopped';
+                matches[i].timerLastStop = 0;
+                saveResults();
+                renderMatches();
+            });
         }
     });
 
-    // Global timer tick for running timers
-    if (window._globalTimerInterval) clearInterval(window._globalTimerInterval);
-    window._globalTimerInterval = setInterval(() => {
-        matches.forEach((m, i) => {
-            if (m.timerState === 'running') {
-                m.timer++;
-            }
-        });
-        saveResults();
-    }, 1000);
-
-    // Modal cronómetro fullscreen
-    if (!window._timerModalInterval) window._timerModalInterval = null;
-    window.showTimerModal = function (matchIdx) {
-        const modal = document.getElementById('timerModal');
-        const valueEl = document.getElementById('timerModalValue');
-        const closeEl = document.getElementById('timerModalClose');
-        let blink = false;
-        function formatTimer(secs) {
-            const mm = Math.floor(secs / 60).toString().padStart(2, '0');
-            const ss = (secs % 60).toString().padStart(2, '0');
-            return `${mm}:${ss}`;
+    // Update running timers
+    matches.forEach((m, i) => {
+        if (m.timerState === 'running') {
+            const updateTimer = () => {
+                if (matches[i].timerState === 'running') {
+                    const elapsed = Math.floor((Date.now() - matches[i].timerStartTime) / 1000);
+                    matches[i].timer = elapsed;
+                    const timerDisplay = document.getElementById(`timer${i}`);
+                    if (timerDisplay) {
+                        const mm = Math.floor(elapsed / 60).toString().padStart(2, '0');
+                        const ss = (elapsed % 60).toString().padStart(2, '0');
+                        timerDisplay.textContent = `${mm}:${ss}`;
+                    }
+                    setTimeout(updateTimer, 1000);
+                }
+            };
+            updateTimer();
         }
-        function update() {
-            const m = matches[matchIdx];
-            valueEl.textContent = formatTimer(m.timer);
-            // Obtener duración del partido en segundos
-            let matchDurationMin = 6;
-            const durInput = document.getElementById('matchDurationInput');
-            if (durInput && durInput.value) {
-                matchDurationMin = parseInt(durInput.value, 10) || 6;
-            }
-            const matchDurationSec = matchDurationMin * 60;
-            if (m.timer > matchDurationSec) {
-                // Sobrepasó el tiempo: titilar entre dos tonos de rojo
-                valueEl.style.color = blink ? '#ff1a1a' : '#b80000';
-                valueEl.style.textShadow = blink ? '0 0 16px #ff1a1a, 0 0 32px #ff1a1a' : '0 0 16px #b80000, 0 0 32px #b80000';
-                valueEl.style.opacity = '1';
-            } else if (m.timer === matchDurationSec) {
-                // Justo en el tiempo: titilar entre dos tonos de rojo
-                valueEl.style.color = blink ? '#ff1a1a' : '#b80000';
-                valueEl.style.textShadow = blink ? '0 0 16px #ff1a1a, 0 0 32px #ff1a1a' : '0 0 16px #b80000, 0 0 32px #b80000';
-                valueEl.style.opacity = '1';
-            } else if (m.timer >= matchDurationSec - 60) {
-                // Queda 1 min o menos: titilar entre dos tonos de amarillo
-                valueEl.style.color = blink ? '#ffe600' : '#b8a100';
-                valueEl.style.textShadow = blink ? '0 0 16px #ffe600, 0 0 32px #ffe600' : '0 0 16px #b8a100, 0 0 32px #b8a100';
-                valueEl.style.opacity = '1';
-            } else {
-                valueEl.style.color = '#fff';
-                valueEl.style.textShadow = '';
-                valueEl.style.opacity = blink ? '0.7' : '1';
-            }
-            valueEl.style.fontWeight = '900';
-            blink = !blink;
-        }
-        if (window._timerModalInterval) clearInterval(window._timerModalInterval);
-        update();
-        window._timerModalInterval = setInterval(update, 1000);
-        modal.classList.remove('hidden');
-        closeEl.onclick = () => {
-            modal.classList.add('hidden');
-            clearInterval(window._timerModalInterval);
-        };
-        // Cerrar con ESC
-        window.onkeydown = (e) => {
-            if (e.key === 'Escape') {
-                modal.classList.add('hidden');
-                clearInterval(window._timerModalInterval);
-            }
-        };
-    };
+    });
 }
 
 function saveResults() {
@@ -550,6 +659,22 @@ function createTournament() {
 
 window.onload = () => {
     if (!loadResults()) createTournament();
+    
+    // Set up event listeners after DOM is loaded
+    document.getElementById('createTournamentBtn').onclick = () => {
+        if (confirm('Esto reiniciará los resultados guardados, ¿continuar?')) {
+            localStorage.removeItem('futbol5-torneo-vuelta-desempate'); // Usa el valor literal del storageKey
+            createTournament();
+        }
+    };
+    
+    // Event listener para el checkbox de drag & drop
+    const dragDropCheckbox = document.getElementById('allowDragDropCheckbox');
+    if (dragDropCheckbox) {
+        dragDropCheckbox.addEventListener('change', () => {
+            renderMatches(); // Re-renderizar para habilitar/deshabilitar drag & drop
+        });
+    }
 };
 
 
@@ -568,10 +693,3 @@ function shuffleArray(array) {
     }
     return array;
 }
-
-document.getElementById('createTournamentBtn').onclick = () => {
-    if (confirm('Esto reiniciará los resultados guardados, ¿continuar?')) {
-        localStorage.removeItem('futbol5-torneo-vuelta-desempate'); // Usa el valor literal del storageKey
-        createTournament();
-    }
-};
